@@ -3,6 +3,7 @@ import random
 import collections
 import numpy as np
 import matplotlib.pyplot as plt
+import plotly.figure_factory as ff
 
 class RNNStateSet:
     def __init__(self, dimension: int, gibbs_total: int, weights: list, const: float, gain: float):
@@ -23,23 +24,31 @@ class RNNStateSet:
         self.__set_all_theoretical_gibbs_num()
         self.temporal_transition_record = [0]
         self.update_count = 0
+        self.binary_update_order = None
 
     def get_index(self, binary_set):
         for idx, st in enumerate(self.state_sets):
             if binary_set == st.binary_set:
                 return idx
 
-    def update_gibbs_system(self, update_num, model):
+    def update_gibbs_system(self, update_num: int, model: str="probabilistic", binary_update_order: list="None"):
+        """
+        if model == "probabilistic":
+            binary_update_order = None
+        elif model == "deterministic":
+            binary_update_order = list[dimension]
+            # [0, 1, 2, ... n-1]
+        """
         for _ in range(update_num):
-            self.__update_gibbs_system_(model)
+            self.__update_gibbs_system_(model, binary_update_order)
             self.update_count += 1
         self.__set_transition_count()
 
-    def __update_gibbs_system_(self, model="probabilistic"):
+    def __update_gibbs_system_(self, model: str, binary_update_order: list=None):
         if model == "probabilistic":
             model = ProbabilisticModel(self.gain, self.weights)
         elif model == "deterministic":
-            model = DeterministicModel(self.gain, self.weights)
+            model = DeterministicModel(self.gain, self.weights, self.update_count, binary_update_order)
         else:
             raise ValueError("model must be probabilistic or deterministic")
 
@@ -137,19 +146,26 @@ class BinaryModel:
         pass
 
 class DeterministicModel(BinaryModel):
-    def __init__(self, gain: float, weights: list):
+    def __init__(self, gain: float, weights: list, update_count: int, binary_update_order: list):
         super().__init__(gain, weights)
+        self.update_count = update_count
+        self.binary_update_order = binary_update_order
 
-    def pred(self, input):
+    def pred(self, input: tuple):
         input_list_casting = list(map(int, input))
         weights = np.array(self.weights)
         input_with_bias = np.array([1] + input_list_casting)
 
         # choose the update neuron
-        update_index = random.choices(range(len(input)), k=1, weights=[1, 1, 1])[0]
+        update_index = self.__choice_neuron(input)
         s_hat = np.sum(weights[(update_index + 1), :] * (input_with_bias))
         input_list_casting[update_index] = self._activation(s_hat)
         return tuple(map(str, input_list_casting))
+
+    def __choice_neuron(self, input: tuple):
+        dimension = len(input)
+        update_index = self.binary_update_order[self.update_count % dimension]
+        return update_index
 
     def _activation(self, s_hat):
         p = self.__sigmoid(self.gain, s_hat)
@@ -197,7 +213,7 @@ class ProbabilisticModel(BinaryModel):
 
 def main():
     dimension = 3
-    gibbs_total = 1000
+    gibbs_total = 1
     weights = [
         [0, 6, -16, 5],
         [6, 0, 10, -8],
@@ -208,9 +224,30 @@ def main():
     gain = 0.1
     rnn = RNNStateSet(dimension, gibbs_total, weights, const, gain)
     # rnn.update_gibbs_system(update_num=100, model="probabilistic")
-    rnn.update_gibbs_system(update_num=1000, model="deterministic")
 
-    # transition_count = collections.Counter(rnn.temporal_transition_record)
+    deterministic_order = [list(tup) for tup in itertools.permutations(range(dimension))]
+    # print(deterministic_order)
+    for j, dorder in enumerate(deterministic_order):
+        # print(dorder)
+        data_matrix = [['update', '$x1, x2, x3$', 'energy']]
+        for i in range(5):
+            rnn = RNNStateSet(dimension, gibbs_total, weights, const, gain)
+            rnn.update_gibbs_system(update_num=5, model="deterministic", binary_update_order=dorder)
+            # print(f"{rnn.state_sets[i].binary_set}: ", rnn.state_sets[i].energy)
+            data_matrix.append([i, list(map(int, rnn.state_sets[rnn.temporal_transition_record[i]].binary_set)), rnn.state_sets[rnn.temporal_transition_record[i]].energy])
+        # print(data_matrix)
+        fig = ff.create_table(data_matrix)
+        # print(index)
+        # fig.write_image(f'./img/table_0_{j}.png')
+        import sys
+        sys.exit()
+        # import time
+        # time.sleep(2)
+        # fig.show()
+
+    import sys
+    sys.exit()
+
     print(f"the number of updating system: {rnn.update_count}")
     for index in range(rnn.state_total):
         print(
